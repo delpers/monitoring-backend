@@ -1,5 +1,14 @@
 fastapi
-uvicorn
+motor
+pydantic
+python-dotenv
 requests
 dnspython
 python-whois
+beautifulsoup4
+lxml
+aiohttp
+cachetools
+uvicorn
+jwt
+PyJWT
