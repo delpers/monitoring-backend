@@ -6,8 +6,7 @@ from app.api.services_api import app  # Assurez-vous que app est bien importé d
 # Définir les origines autorisées
 # Ajoutez le protocole HTTP ou HTTPS pour que CORS fonctionne correctement
 ALLOWED_ORIGINS = [
-    "https://fragmastering.com",  # pour les demandes HTTPS
-    "http://fragmastering.com",   # pour les demandes HTTP (si nécessaire)
+    "*",  # pour les demandes HTTPS   # pour les demandes HTTP (si nécessaire)
 ]
 
 # Configurer CORS correctement
