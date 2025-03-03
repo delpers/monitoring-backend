@@ -9,7 +9,6 @@ from typing import Optional
 import traceback
 from bson import ObjectId  # Gestion des ObjectId pour MongoDB
 from app.services.ip_public_service import get_public_ip  # Import de la fonction
-from app.routes.monitoring_ws_routes import send_update_to_clients  # Importer la fonction WebSocket
 
 # Charger les variables d'environnement
 load_dotenv()
@@ -45,25 +44,14 @@ class VisitUpdateData(BaseModel):
 # Route pour obtenir l'IP publique
 @router.get("/agents/ip")
 async def public_ip(request: Request):
-    ip = get_public_ip(request)  # Appel à la fonction modifiée avec `request` comme paramètre
+    ip = get_public_ip(request)  # Appel à la fonction modifiée avec request comme paramètre
     if ip:
-        return {"ip": ip["ip"]}  # Extraire l'adresse IP de l'objet renvoyé par `get_public_ip`
+        return {"ip": ip["ip"]}  # Extraire l'adresse IP de l'objet renvoyé par get_public_ip
     return {"error": "Unable to fetch public IP"}
 
 # Route pour générer un token
 @router.post("/agents/generate-token/")
-async def generate_token(request: TokenRequest, req: Request):
-    ip_info = get_public_ip(req)
-    ip = ip_info["ip"]
-
-    # Filtrage d'IP en temps réel
-    try:
-        check_ip(ip)
-        increment_attempts(ip)
-    except HTTPException as e:
-        print(f"⚠️ IP bloquée : {ip}")
-        raise e
-
+async def generate_token(request: TokenRequest):
     try:
         full_user_id = f"{request.domain}_user_{request.user_id}"
         payload = {
@@ -71,8 +59,11 @@ async def generate_token(request: TokenRequest, req: Request):
             "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=1)
         }
         token = jwt.encode(payload, SECRET_KEY, algorithm="HS256")
+        
+        # Handle different versions of PyJWT
         if isinstance(token, bytes):
             token = token.decode('utf-8')
+            
         return {"token": token}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur de génération du token: {str(e)}")
