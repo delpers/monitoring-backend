@@ -46,7 +46,7 @@ class VisitUpdateData(BaseModel):
 async def public_ip(request: Request):
     ip = get_public_ip(request)  # Appel à la fonction modifiée avec `request` comme paramètre
     if ip:
-        return {"ip": ip}
+        return {"ip": ip["ip"]}  # Extraire l'adresse IP de l'objet renvoyé par `get_public_ip`
     return {"error": "Unable to fetch public IP"}
 
 # Route pour générer un token
