@@ -6,7 +6,6 @@ from app.services.domain_service import GetDomainInfo
 from app.services.monitoring_service import MonitoringService
 from app.services.response_time_service import get_response_time
 from app.services.error_page_service import ErrorPageService
-from app.api.monitoring_agent import router as monitoring_agent_router  # Import de l'API monitoring_agent
 
 # Création du routeur pour les routes de monitoring
 app = FastAPI()
@@ -18,9 +17,6 @@ dns_service = DNSService()
 ssl_service = SSLService()
 domain_service = GetDomainInfo()
 monitoring_service = MonitoringService()
-
-# Enregistrer le routeur de monitoring des visites avec un préfixe "/mgt"
-app.include_router(monitoring_agent_router, prefix="/services")
 
 # Route pour récupérer la liste des domaines depuis une API externe
 @router.get("/domains")

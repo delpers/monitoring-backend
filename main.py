@@ -31,5 +31,5 @@ app.add_middleware(
 # Ajouter le routeur de monitoring sous le préfixe "/services"
 app.include_router(monitoring_router, prefix="/services")
 
-# Ajouter le routeur des agents sous le préfixe "/agents"
-app.include_router(agents_ip_router, prefix="/agents")
+# Ajouter le routeur des agents sous le préfixe "/*"
+app.include_router(agents_ip_router)

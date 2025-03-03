@@ -1,12 +1,20 @@
-from fastapi import APIRouter, HTTPException, Depends, Header, Body
-import jwt
+
+
+
+
+
+
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header, Body
+from pydantic import BaseModel
+import jwt  # Assurez-vous que PyJWT est installé: pip install PyJWT
 import datetime
 import os
 from dotenv import load_dotenv
-from pydantic import BaseModel
 from motor.motor_asyncio import AsyncIOMotorClient
-from bson import ObjectId
-import requests
+from typing import Optional
+import traceback
+from bson import ObjectId  # Gestion des ObjectId pour MongoDB
+from app.services.ip_public_service import get_public_ip  # Import de la fonction
 
 # Charger les variables d'environnement
 load_dotenv()
@@ -16,120 +24,165 @@ MONGO_URI = os.getenv("MONGO_URI")
 # Connexion à MongoDB
 client = AsyncIOMotorClient(MONGO_URI)
 db = client.monitoring_db
-agents_collection = db.agents  # Collection des agents (nouvelle collection)
+visits_collection = db.visits
+ip_collection = db.ip_logs  # Collection pour les logs d'IP
 
-# Créer un routeur pour les services
+app = FastAPI()
 router = APIRouter()
 
-# Fonction pour obtenir l'IP publique
-def get_public_ip():
-    try:
-        # Utilisation d'un service comme ipify pour obtenir l'IP publique
-        response = requests.get("https://api.ipify.org?format=json")
-        response.raise_for_status()  # Vérifie que la requête a réussi
-        data = response.json()
-        return data.get("ip")
-    except requests.exceptions.RequestException as e:
-        # En cas d'erreur lors de la récupération
-        print(f"Erreur lors de la récupération de l'IP publique: {e}")
-        return None
+# 📌 Modèles Pydantic
+class TokenRequest(BaseModel):
+    domain: str
+    user_id: str  
+
+class UserVisit(BaseModel):
+    ip: str
+    user_agent: str
+    date_entree: datetime.datetime
+    date_sortie: Optional[datetime.datetime] = None
+    domain: str
+    tracking_user_analytics: str  # Identifiant utilisateur unique
+
+class VisitUpdateData(BaseModel):
+    date_sortie: datetime.datetime
+    domain: str
 
 # Route pour obtenir l'IP publique
-@router.get("/ip")
+@router.get("/services/ip")
 async def public_ip():
     ip = get_public_ip()  # Appel à la fonction qui récupère l'IP
     if ip:
         return {"ip": ip}
     return {"error": "Unable to fetch public IP"}
 
-# Vérification du token
+# 🔐 Vérification du token JWT
 def verify_token(authorization: str = Header(...)):
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Token missing")
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Token manquant ou mal formaté")
     
     try:
-        token = authorization.split(" ")[1]
+        token = authorization.split("Bearer ")[1]  # Extraction après "Bearer "
         decoded_token = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
         return decoded_token
     except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
+        raise HTTPException(status_code=401, detail="Token expiré")
     except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        raise HTTPException(status_code=401, detail="Token invalide")
 
-# Modèle pour enregistrer un agent
-class Agent(BaseModel):
-    agent_id: str
-    ip: str
-    user_agent: str
-    domain: str
-    date_added: datetime.datetime = datetime.datetime.utcnow()
-
-# Route pour enregistrer un agent
-@router.post("/register/")
-async def register_agent(agent: Agent, token: dict = Depends(verify_token)):
+# 🚀 Enregistrement d'une nouvelle visite
+@router.post("/monitoring/visit/")
+async def track_visit(visit: UserVisit, token: dict = Depends(verify_token)):
     try:
-        agent_data = {
-            "agent_id": agent.agent_id,
-            "ip": agent.ip,
-            "user_agent": agent.user_agent,
-            "domain": agent.domain,
-            "date_added": agent.date_added
+        print("✅ Enregistrement d'une nouvelle visite:", visit.dict())
+
+        # Insérer la visite en MongoDB
+        visit_data = {
+            "ip": visit.ip,
+            "user_agent": visit.user_agent,
+            "date_entree": visit.date_entree,
+            "date_sortie": visit.date_sortie,
+            "domain": visit.domain,
+            "tracking_user_analytics": visit.tracking_user_analytics
         }
-        result = await agents_collection.insert_one(agent_data)
-        return {"status": "success", "agent_id": str(result.inserted_id)}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erreur lors de l'enregistrement de l'agent: {str(e)}")
+        result = await visits_collection.insert_one(visit_data)
 
-# Modèle pour mettre à jour un agent
-class UpdateAgent(BaseModel):
-    ip: str
-    user_agent: str
+        # Ajouter l'IP au suivi des logs par domaine
+        ip_data = {
+            "ip": visit.ip,
+            "user_agent": visit.user_agent,
+            "date_entree": visit.date_entree,
+            "date_sortie": visit.date_sortie,
+            "tracking_user_analytics": visit.tracking_user_analytics
+        }
 
-# Route pour mettre à jour un agent
-@router.put("/update/{agent_id}")
-async def update_agent(agent_id: str, agent_data: UpdateAgent, token: dict = Depends(verify_token)):
-    try:
-        # Vérifier si l'agent existe dans la base de données
-        if not ObjectId.is_valid(agent_id):
-            raise HTTPException(status_code=400, detail="Agent ID invalide")
-
-        agent_obj_id = ObjectId(agent_id)
-        existing_agent = await agents_collection.find_one({"_id": agent_obj_id})
-
-        if not existing_agent:
-            raise HTTPException(status_code=404, detail="Agent non trouvé")
-
-        # Mise à jour des informations de l'agent
-        update_result = await agents_collection.update_one(
-            {"_id": agent_obj_id},
-            {"$set": {
-                "ip": agent_data.ip,
-                "user_agent": agent_data.user_agent
-            }}
+        await ip_collection.update_one(
+            {"domain": visit.domain},
+            {"$push": {"ips": ip_data}},
+            upsert=True
         )
 
-        if update_result.modified_count == 0:
-            raise HTTPException(status_code=400, detail="Aucune modification effectuée")
-
-        return {"status": "success", "message": "Agent mis à jour"}
+        return {
+            "status": "success",
+            "visit_id": str(result.inserted_id),
+            "tracking_user_analytics": visit.tracking_user_analytics
+        }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erreur lors de la mise à jour de l'agent: {str(e)}")
+        error_details = traceback.format_exc()
+        print("❌ Erreur lors de l'enregistrement de la visite:", error_details)
+        raise HTTPException(status_code=500, detail=f"Erreur lors de l'insertion: {str(e)}")
 
-# Route pour récupérer les agents par domaine
-@router.get("/agents/{domain}")
-async def get_agents_by_domain(domain: str):
+# 🔄 Mise à jour de la sortie de visite
+@router.put("/monitoring/visit/update/")
+async def update_visit_exit(
+    visit_id: str,  # Paramètre d'URL
+    visit_update: VisitUpdateData = Body(...),  # Corps de la requête
+    token: dict = Depends(verify_token)
+):
     try:
-        # Accédez à la collection 'agents' sous monitoring_db
-        agents = await agents_collection.find({"domain": domain}).to_list(100)
+        print("📡 Mise à jour d'une visite avec visit_id:", visit_id)
+        print("📡 Données reçues:", visit_update.dict())
 
-        if not agents:
-            return {"status": "success", "agents": []}
+        # Vérifier que visit_id est un ObjectId valide
+        try:
+            object_id = ObjectId(visit_id)
+        except Exception as e:
+            print("❌ ObjectId invalide:", str(e))
+            raise HTTPException(status_code=400, detail=f"visit_id invalide: {str(e)}")
 
-        # Conversion des ObjectId en string pour le JSON
-        for agent in agents:
-            agent["_id"] = str(agent["_id"])
+        # Vérifier si la visite existe
+        existing_visit = await visits_collection.find_one({"_id": object_id})
+        if not ObjectId.is_valid(visit_id):
+            print(f"❌ visit_id invalide: {visit_id}")
+            raise HTTPException(status_code=400, detail="visit_id invalide")
+        
+        print("📊 Visite existante trouvée:", existing_visit)
 
-        return {"status": "success", "agents": agents}
+        # Mise à jour de la date de sortie
+        update_result = await visits_collection.update_one(
+            {"_id": object_id, "domain": visit_update.domain},
+            {"$set": {"date_sortie": visit_update.date_sortie.isoformat() if visit_update.date_sortie else None}}
+        )
+
+        print("📊 Résultat de la mise à jour:", update_result.modified_count)
+
+        if update_result.modified_count == 0:
+            print("⚠️ Aucune modification effectuée pour:", visit_id)
+            # Vérifier si le domaine ne correspond pas
+            if existing_visit.get("domain") != visit_update.domain:
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Domaine incorrect. Attendu: {existing_visit.get('domain')}, Reçu: {visit_update.domain}"
+                )
+            # Sinon, peut-être déjà mis à jour
+            raise HTTPException(status_code=400, detail="Sortie déjà mise à jour ou données inchangées")
+
+        print("✅ Sortie mise à jour avec succès pour:", visit_id)
+        return {"status": "success", "message": "Sortie mise à jour"}
+    except HTTPException:
+        # Relancer les exceptions HTTP déjà formatées
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération des agents: {str(e)}")
+        error_details = traceback.format_exc()
+        print("❌ Erreur complète lors de la mise à jour:")
+        print(error_details)  # Log plus détaillé
+        raise HTTPException(status_code=500, detail=f"Erreur MongoDB: {str(e)}")
+
+
+# 🧐 Endpoint pour récupérer les visites
+@router.get("/monitoring/visits/")
+async def get_visits():
+    try:
+        cursor = visits_collection.find()
+        visits = await cursor.to_list(100)
+        
+        # Convertir ObjectId en string pour la sérialisation JSON
+        for visit in visits:
+            if "_id" in visit:
+                visit["_id"] = str(visit["_id"])
+                
+        return {"status": "success", "visits": visits}
+    except Exception as e:
+        error_details = traceback.format_exc()
+        print("❌ Erreur lors de la récupération des visites:", error_details)
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération des visites: {str(e)}")
 
