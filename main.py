@@ -1,6 +1,5 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Query, Header, Body
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Query, Request, Header, Body
 from fastapi.middleware.cors import CORSMiddleware
-from app.services.ip_public_service import get_public_ip
 import jwt
 import datetime
 import os
@@ -10,6 +9,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from typing import Optional
 from bson import ObjectId
 from app.routes.monitoring_routes import router as monitoring_router  # Import du routeur de monitoring
+import requests
 
 # Charger les variables d'environnement
 load_dotenv()
@@ -27,7 +27,7 @@ app = FastAPI()
 origins = [
     "http://localhost",  # Ajoutez ici l'URL de votre frontend en développement
     "http://localhost:3000",  # Exemple de port frontend React
-    "https://fragmastering.com",  # Autorise toutes les origines (prenez garde en production, il est préférable de restreindre les origines)
+    "*",  # Autorise toutes les origines (prenez garde en production, il est préférable de restreindre les origines)
 ]
 
 app.add_middleware(
@@ -43,26 +43,25 @@ router = APIRouter()
 
 app.include_router(monitoring_router)
 
-def get_client_ip(request: Request) -> str:
-    """Extract the client IP address from various headers and fallbacks."""
-    # Check potential headers in order of reliability
-    if request.headers.get("CF-Connecting-IP"):  # Cloudflare
-        return request.headers.get("CF-Connecting-IP")
-    
-    elif request.headers.get("X-Real-IP"):  # Often used by Nginx
-        return request.headers.get("X-Real-IP")
-    
-    elif request.headers.get("X-Forwarded-For"):  # Standard proxy header
-        # X-Forwarded-For can be a comma-separated list, the leftmost is the original client
-        return request.headers.get("X-Forwarded-For").split(",")[0].strip()
-    
-    # Fallback to direct client connection
-    return request.client.host
+def get_public_ip():
+    try:
+        # Utilisation d'un service comme ipify pour obtenir l'IP publique
+        response = requests.get("https://api.ipify.org?format=json")
+        response.raise_for_status()  # Vérifie que la requête a réussi
+        data = response.json()
+        return data.get("ip")
+    except requests.exceptions.RequestException as e:
+        # En cas d'erreur lors de la récupération
+        print(f"Erreur lors de la récupération de l'IP publique: {e}")
+        return None
 
+# Route pour obtenir l'IP publique
 @router.get("/services/ip")
-async def visitor_ip(request: Request):
-    ip = get_client_ip(request)
-    return {"ip": ip}
+async def public_ip():
+    ip = get_public_ip()  # Appel à la fonction qui récupère l'IP
+    if ip:
+        return {"ip": ip}
+    return {"error": "Unable to fetch public IP"}
 
 # Vérification du token
 def verify_token(authorization: str = Header(...)):
