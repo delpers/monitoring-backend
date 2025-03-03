@@ -10,5 +10,4 @@ lxml
 aiohttp
 cachetools
 uvicorn
-jwt
 PyJWT
