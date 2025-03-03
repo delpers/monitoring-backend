@@ -1,9 +1,3 @@
-
-
-
-
-
-
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header, Body
 from pydantic import BaseModel
 import jwt  # Assurez-vous que PyJWT est installé: pip install PyJWT
@@ -48,12 +42,31 @@ class VisitUpdateData(BaseModel):
     domain: str
 
 # Route pour obtenir l'IP publique
-@router.get("/services/ip")
+@router.get("/agents/ip")
 async def public_ip():
     ip = get_public_ip()  # Appel à la fonction qui récupère l'IP
     if ip:
         return {"ip": ip}
     return {"error": "Unable to fetch public IP"}
+
+# Route pour générer un token
+@router.post("/agents/generate-token/")
+async def generate_token(request: TokenRequest):
+    try:
+        full_user_id = f"{request.domain}_user_{request.user_id}"
+        payload = {
+            "user_id": full_user_id,
+            "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=1)
+        }
+        token = jwt.encode(payload, SECRET_KEY, algorithm="HS256")
+        
+        # Handle different versions of PyJWT
+        if isinstance(token, bytes):
+            token = token.decode('utf-8')
+            
+        return {"token": token}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur de génération du token: {str(e)}")
 
 # 🔐 Vérification du token JWT
 def verify_token(authorization: str = Header(...)):
@@ -70,7 +83,7 @@ def verify_token(authorization: str = Header(...)):
         raise HTTPException(status_code=401, detail="Token invalide")
 
 # 🚀 Enregistrement d'une nouvelle visite
-@router.post("/monitoring/visit/")
+@router.post("/agents/visit/")
 async def track_visit(visit: UserVisit, token: dict = Depends(verify_token)):
     try:
         print("✅ Enregistrement d'une nouvelle visite:", visit.dict())
@@ -112,7 +125,7 @@ async def track_visit(visit: UserVisit, token: dict = Depends(verify_token)):
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'insertion: {str(e)}")
 
 # 🔄 Mise à jour de la sortie de visite
-@router.put("/monitoring/visit/update/")
+@router.put("/agents/visit/update/")
 async def update_visit_exit(
     visit_id: str,  # Paramètre d'URL
     visit_update: VisitUpdateData = Body(...),  # Corps de la requête
@@ -169,7 +182,7 @@ async def update_visit_exit(
 
 
 # 🧐 Endpoint pour récupérer les visites
-@router.get("/monitoring/visits/")
+@router.get("/agents/visits/")
 async def get_visits():
     try:
         cursor = visits_collection.find()
