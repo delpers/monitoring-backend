@@ -182,20 +182,24 @@ async def update_visit_exit(
 
 
 # 🧐 Endpoint pour récupérer les visites
-@router.get("/agents/visits/")
-async def get_visits():
+@router.get("/agents/visits/{domain}")
+async def get_visits_by_domain(domain: str):
     try:
-        cursor = visits_collection.find()
-        visits = await cursor.to_list(100)
-        
-        # Convertir ObjectId en string pour la sérialisation JSON
-        for visit in visits:
-            if "_id" in visit:
-                visit["_id"] = str(visit["_id"])
-                
-        return {"status": "success", "visits": visits}
-    except Exception as e:
-        error_details = traceback.format_exc()
-        print("❌ Erreur lors de la récupération des visites:", error_details)
-        raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération des visites: {str(e)}")
+        # Accédez à la collection 'visits' sous monitoring_db
+        visits_collection = db.visits
 
+        # Filtrer les visites par domaine
+        visits = await visits_collection.find({"domain": domain}).to_list(100)
+
+        # Si aucune visite n'est trouvée
+        if not visits:
+            return {"status": "success", "visits": []}
+
+        # Conversion des ObjectId en string pour le JSON
+        for visit in visits:
+            visit["_id"] = str(visit["_id"])
+
+        return {"status": "success", "visits": visits}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération des visites: {str(e)}")
