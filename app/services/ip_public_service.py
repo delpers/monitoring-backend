@@ -1,7 +1,4 @@
-import requests
 from fastapi import Request
-
-IPINFO_API_KEY = "8ac58b80584dd3"  # Remplacez par votre token API ipinfo.io
 
 def get_public_ip(request: Request):
     try:
@@ -13,23 +10,9 @@ def get_public_ip(request: Request):
         else:
             # Sinon, utiliser l'IP directe du client (souvent le proxy lui-même)
             ip = request.client.host
-        
-        # Effectuer une requête à l'API ipinfo pour récupérer les informations de l'IP
-        response = requests.get(f"https://ipinfo.io/{ip}/json?token={IPINFO_API_KEY}")
-        data = response.json()
 
-        # Récupérer la ville, l'ISP et l'ASN
-        city = data.get("city", "Inconnue")
-        isp = data.get("org", "Inconnu")  # org contient généralement l'ISP ou l'AS
-        asn = data.get("asn", {}).get("asn", "Inconnu")  # ASN peut être dans la clé 'asn'
-
-        return {
-            "ip": ip,
-            "city": city,
-            "isp": isp,
-            "asn": asn
-        }
+        return {"ip": ip}
     
     except Exception as e:
-        print(f"Erreur lors de la récupération de l'IP publique ou des informations : {e}")
-        return None
+        print(f"Erreur lors de la récupération de l'IP publique : {e}")
+        return {"error": "Unable to retrieve IP"}
