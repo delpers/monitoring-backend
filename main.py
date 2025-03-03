@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routes.monitoring_routes import router as monitoring_router  # Import du routeur de monitoring
 from app.routes.agents_ip_routes import router as agents_ip_router  # Import du routeur des agents
-from app.routes.monitoring_ws_routes import router as ws_router  # Import de la route WebSocket
+# from app.routes.monitoring_ws_routes import router as ws_router  # Import de la route WebSocket
 
 # Charger les variables d'environnement (si besoin)
 import os
@@ -36,4 +36,4 @@ app.include_router(monitoring_router, prefix="/services")
 app.include_router(agents_ip_router)
 
 # Enregistrer la route WebSocket
-app.include_router(ws_router)
+# app.include_router(ws_router)
