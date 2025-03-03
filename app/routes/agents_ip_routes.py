@@ -71,13 +71,6 @@ async def generate_token(request: TokenRequest, req: Request):
     ip = ip_info["ip"]
 
     try:
-        # Retiré l'appel à check_ip(ip)
-        await increment_attempts(ip)
-    except HTTPException as e:
-        print(f"⚠️ IP bloquée : {ip}")
-        raise e
-
-    try:
         full_user_id = f"{request.domain}_user_{request.user_id}"
         payload = {
             "user_id": full_user_id,
