@@ -11,3 +11,4 @@ aiohttp
 cachetools
 uvicorn
 PyJWT
+redis

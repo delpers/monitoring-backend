@@ -9,6 +9,7 @@ from typing import Optional
 import traceback
 from bson import ObjectId  # Gestion des ObjectId pour MongoDB
 from app.services.ip_public_service import get_public_ip  # Import de la fonction
+from app.routes.monitoring_ws_routes import send_update_to_clients  # Importer la fonction WebSocket
 
 # Charger les variables d'environnement
 load_dotenv()
@@ -51,7 +52,18 @@ async def public_ip(request: Request):
 
 # Route pour générer un token
 @router.post("/agents/generate-token/")
-async def generate_token(request: TokenRequest):
+async def generate_token(request: TokenRequest, req: Request):
+    ip_info = get_public_ip(req)
+    ip = ip_info["ip"]
+
+    # Filtrage d'IP en temps réel
+    try:
+        check_ip(ip)
+        increment_attempts(ip)
+    except HTTPException as e:
+        print(f"⚠️ IP bloquée : {ip}")
+        raise e
+
     try:
         full_user_id = f"{request.domain}_user_{request.user_id}"
         payload = {
@@ -59,11 +71,8 @@ async def generate_token(request: TokenRequest):
             "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=1)
         }
         token = jwt.encode(payload, SECRET_KEY, algorithm="HS256")
-        
-        # Handle different versions of PyJWT
         if isinstance(token, bytes):
             token = token.decode('utf-8')
-            
         return {"token": token}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur de génération du token: {str(e)}")
@@ -86,9 +95,7 @@ def verify_token(authorization: str = Header(...)):
 @router.post("/agents/visit/")
 async def track_visit(visit: UserVisit, token: dict = Depends(verify_token)):
     try:
-        print("✅ Enregistrement d'une nouvelle visite:", visit.dict())
-
-        # Insérer la visite en MongoDB
+        # Insérer la visite dans MongoDB
         visit_data = {
             "ip": visit.ip,
             "user_agent": visit.user_agent,
@@ -99,20 +106,9 @@ async def track_visit(visit: UserVisit, token: dict = Depends(verify_token)):
         }
         result = await visits_collection.insert_one(visit_data)
 
-        # Ajouter l'IP au suivi des logs par domaine
-        ip_data = {
-            "ip": visit.ip,
-            "user_agent": visit.user_agent,
-            "date_entree": visit.date_entree,
-            "date_sortie": visit.date_sortie,
-            "tracking_user_analytics": visit.tracking_user_analytics
-        }
-
-        await ip_collection.update_one(
-            {"domain": visit.domain},
-            {"$push": {"ips": ip_data}},
-            upsert=True
-        )
+        # Envoie de la mise à jour en temps réel aux clients WebSocket
+        message = {"status": "new_visit", "visit": visit.dict()}
+        await send_update_to_clients(message)  # Envoie de la mise à jour via WebSocket
 
         return {
             "status": "success",
