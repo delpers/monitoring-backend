@@ -42,12 +42,6 @@ class VisitUpdateData(BaseModel):
     date_sortie: datetime.datetime
     domain: str
 
-# Fonction fictive pour vérifier l'IP
-async def check_ip(ip: str):
-    blocked_ips = ["192.168.0.1", "203.0.113.5"]  # Liste fictive
-    if ip in blocked_ips:
-        raise HTTPException(status_code=403, detail="IP bloquée")
-
 # Fonction fictive pour incrémenter les tentatives
 async def increment_attempts(ip: str):
     attempts_collection = db.attempts
@@ -77,7 +71,7 @@ async def generate_token(request: TokenRequest, req: Request):
     ip = ip_info["ip"]
 
     try:
-        await check_ip(ip)
+        # Retiré l'appel à check_ip(ip)
         await increment_attempts(ip)
     except HTTPException as e:
         print(f"⚠️ IP bloquée : {ip}")

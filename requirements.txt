@@ -9,6 +9,6 @@ beautifulsoup4
 lxml
 aiohttp
 cachetools
-uvicorn
+uvicorn[standard]
 PyJWT
 redis
