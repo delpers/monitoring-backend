@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Query, Header, Body
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Query, Header, Body
 from fastapi.middleware.cors import CORSMiddleware
 from app.services.ip_public_service import get_public_ip
 import jwt
@@ -43,13 +43,26 @@ router = APIRouter()
 
 app.include_router(monitoring_router)
 
-# Route pour obtenir l'IP publique
+def get_client_ip(request: Request) -> str:
+    """Extract the client IP address from various headers and fallbacks."""
+    # Check potential headers in order of reliability
+    if request.headers.get("CF-Connecting-IP"):  # Cloudflare
+        return request.headers.get("CF-Connecting-IP")
+    
+    elif request.headers.get("X-Real-IP"):  # Often used by Nginx
+        return request.headers.get("X-Real-IP")
+    
+    elif request.headers.get("X-Forwarded-For"):  # Standard proxy header
+        # X-Forwarded-For can be a comma-separated list, the leftmost is the original client
+        return request.headers.get("X-Forwarded-For").split(",")[0].strip()
+    
+    # Fallback to direct client connection
+    return request.client.host
+
 @router.get("/services/ip")
-async def public_ip():
-    ip = get_public_ip()  # Appel à la fonction qui récupère l'IP
-    if ip:
-        return {"ip": ip}
-    return {"error": "Unable to fetch public IP"}
+async def visitor_ip(request: Request):
+    ip = get_client_ip(request)
+    return {"ip": ip}
 
 # Vérification du token
 def verify_token(authorization: str = Header(...)):
