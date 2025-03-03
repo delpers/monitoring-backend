@@ -27,7 +27,7 @@ app = FastAPI()
 origins = [
     "http://localhost",  # Ajoutez ici l'URL de votre frontend en développement
     "http://localhost:3000",  # Exemple de port frontend React
-    "*",  # Autorise toutes les origines (prenez garde en production, il est préférable de restreindre les origines)
+    "https://fragmastering.com",  # Autorise toutes les origines (prenez garde en production, il est préférable de restreindre les origines)
 ]
 
 app.add_middleware(
