@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Header, Body
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Header, Body
 from pydantic import BaseModel
 import jwt  # Assurez-vous que PyJWT est installé: pip install PyJWT
 import datetime
@@ -43,8 +43,8 @@ class VisitUpdateData(BaseModel):
 
 # Route pour obtenir l'IP publique
 @router.get("/agents/ip")
-async def public_ip():
-    ip = get_public_ip()  # Appel à la fonction qui récupère l'IP
+async def public_ip(request: Request):
+    ip = get_public_ip(request)  # Appel à la fonction modifiée avec `request` comme paramètre
     if ip:
         return {"ip": ip}
     return {"error": "Unable to fetch public IP"}
