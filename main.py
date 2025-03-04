@@ -18,7 +18,7 @@ origins = [
     "http://localhost:3000",
     "https://*.gitpod.io",
     "*",                       # Autoriser toutes les origines (attention en production)
-    "https://monitoring-backend-17d6.onrender.com",  # Ajoutez l'URL de votre frontend dans Render si besoin
+    "https://3000-delpers-moinitoringfron-195vwqytq46.ws-eu118.gitpod.io",  # Ajoutez l'URL de votre frontend dans Render si besoin
 ]
 
 app.add_middleware(
