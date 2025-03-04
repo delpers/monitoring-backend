@@ -227,6 +227,46 @@ async def update_visit_exit(
         print(error_details)
         raise HTTPException(status_code=500, detail=f"Erreur MongoDB: {str(e)}")
 
+@router.put("/agents/visit/update/{visit_id}")
+async def update_visit_exit(
+    visit_id: str,
+    visit_update: VisitUpdateData = Body(...),
+    token: dict = Depends(verify_token)
+):
+    try:
+        print("📡 Mise à jour d'une visite avec visit_id:", visit_id)
+        print("📡 Données reçues:", visit_update.dict())
+
+        # Conversion de visit_id en ObjectId
+        object_id = ObjectId(visit_id)
+
+        # Assurez-vous que la date de sortie est en UTC
+        if visit_update.date_sortie.tzinfo is None:
+            visit_update.date_sortie = visit_update.date_sortie.replace(tzinfo=datetime.timezone.utc)
+
+        # Mise à jour de la visite
+        update_result = await visits_collection.update_one(
+            {"_id": object_id, "domain": visit_update.domain},
+            {"$set": {"date_sortie": visit_update.date_sortie}}
+        )
+
+        if update_result.modified_count == 0:
+            raise HTTPException(status_code=400, detail="Mise à jour impossible")
+
+        # Récupérer la visite mise à jour
+        updated_visit = await visits_collection.find_one({"_id": object_id})
+        
+        # Notifier les connexions WebSocket des mises à jour
+        await notify_visits_change({
+            "event": "update_exit",
+            "data": updated_visit
+        })
+
+        return {"status": "success", "message": "Sortie mise à jour"}
+    except Exception as e:
+        print(f"❌ Erreur lors de la mise à jour: {e}")
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la mise à jour: {str(e)}")
+
 # 🧐 Endpoint pour récupérer les visites
 @router.get("/agents/visits/{domain}")
 async def get_visits_by_domain(domain: str):
