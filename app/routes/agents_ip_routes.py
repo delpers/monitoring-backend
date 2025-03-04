@@ -1,14 +1,14 @@
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Header, Body, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
-import jwt  # Assurez-vous que PyJWT est installé: pip install PyJWT
+import jwt
 import datetime
 import os
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
 from typing import Optional, List
 import traceback
-from bson import ObjectId, json_util  # Gestion des ObjectId pour MongoDB
-from app.services.ip_public_service import get_public_ip  # Import de la fonction
+from bson import ObjectId, json_util
+from app.services.ip_public_service import get_public_ip
 import asyncio
 import json
 
@@ -126,7 +126,6 @@ async def notify_visits_change(visit_data: dict):
             print(f"Erreur lors de l'envoi du message: {e}")
 
 # 🚀 Enregistrement d'une nouvelle visite
-# Modifier la fonction `track_visit` pour notifier en temps réel via WebSocket
 @router.post("/agents/visit/")
 async def track_visit(visit: UserVisit, token: dict = Depends(verify_token)):
     try:
@@ -141,6 +140,17 @@ async def track_visit(visit: UserVisit, token: dict = Depends(verify_token)):
             "domain": visit.domain,
             "tracking_user_analytics": visit.tracking_user_analytics
         }
+
+        # Check if the visit already exists
+        existing_visit = await visits_collection.find_one({
+            "domain": visit.domain,
+            "tracking_user_analytics": visit.tracking_user_analytics,
+            "date_sortie": None  # Ensuring the visit is still active
+        })
+
+        if existing_visit:
+            raise HTTPException(status_code=400, detail="La visite est déjà en cours pour cet utilisateur.")
+
         result = await visits_collection.insert_one(visit_data)
 
         # Ajouter l'IP au suivi des logs par domaine
@@ -171,60 +181,50 @@ async def track_visit(visit: UserVisit, token: dict = Depends(verify_token)):
         print("❌ Erreur lors de l'enregistrement de la visite:", error_details)
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'insertion: {str(e)}")
 
-# 🔄 Mise à jour de la sortie de visite
+# Modifier la mise à jour pour s'assurer que le datetime est correctement converti
 @router.put("/agents/visit/update/")
 async def update_visit_exit(
-    visit_id: str,  # Paramètre d'URL
-    visit_update: VisitUpdateData = Body(...),  # Corps de la requête
+    visit_id: str,
+    visit_update: VisitUpdateData = Body(...),
     token: dict = Depends(verify_token)
 ):
     try:
         print("📡 Mise à jour d'une visite avec visit_id:", visit_id)
         print("📡 Données reçues:", visit_update.dict())
 
-        # Vérifier que visit_id est un ObjectId valide
-        try:
-            object_id = ObjectId(visit_id)
-        except Exception as e:
-            print("❌ ObjectId invalide:", str(e))
-            raise HTTPException(status_code=400, detail=f"visit_id invalide: {str(e)}")
+        object_id = ObjectId(visit_id)
 
-        # Vérifier si la visite existe
-        existing_visit = await visits_collection.find_one({"_id": object_id})
-        if not ObjectId.is_valid(visit_id):
-            print(f"❌ visit_id invalide: {visit_id}")
-            raise HTTPException(status_code=400, detail="visit_id invalide")
-        
-        print("📊 Visite existante trouvée:", existing_visit)
+        # Debug print of datetime
+        print("🕒 Date de sortie reçue:", visit_update.date_sortie)
+        print("🕒 Type de date de sortie:", type(visit_update.date_sortie))
 
-        # Mise à jour de la date de sortie
+        # Ensure datetime is UTC
+        if visit_update.date_sortie.tzinfo is None:
+            visit_update.date_sortie = visit_update.date_sortie.replace(tzinfo=datetime.timezone.utc)
+
+        # Alternative update method with explicit UTC conversion
         update_result = await visits_collection.update_one(
             {"_id": object_id, "domain": visit_update.domain},
-            {"$set": {"date_sortie": visit_update.date_sortie.isoformat() if visit_update.date_sortie else None}}
+            {"$set": {"date_sortie": visit_update.date_sortie}}
         )
 
         print("📊 Résultat de la mise à jour:", update_result.modified_count)
 
         if update_result.modified_count == 0:
-            print("⚠️ Aucune modification effectuée pour:", visit_id)
-            # Vérifier si le domaine ne correspond pas
-            if existing_visit.get("domain") != visit_update.domain:
-                raise HTTPException(
-                    status_code=400, 
-                    detail=f"Domaine incorrect. Attendu: {existing_visit.get('domain')}, Reçu: {visit_update.domain}"
-                )
-            # Sinon, peut-être déjà mis à jour
-            raise HTTPException(status_code=400, detail="Sortie déjà mise à jour ou données inchangées")
+            raise HTTPException(status_code=400, detail="Mise à jour impossible")
 
-        print("✅ Sortie mise à jour avec succès pour:", visit_id)
+        # Notify WebSocket clients
+        updated_visit = await visits_collection.find_one({"_id": object_id})
+        await notify_visits_change({
+            "event": "update_exit",
+            "data": updated_visit
+        })
+
         return {"status": "success", "message": "Sortie mise à jour"}
-    except HTTPException:
-        # Relancer les exceptions HTTP déjà formatées
-        raise
     except Exception as e:
         error_details = traceback.format_exc()
         print("❌ Erreur complète lors de la mise à jour:")
-        print(error_details)  # Log plus détaillé
+        print(error_details)
         raise HTTPException(status_code=500, detail=f"Erreur MongoDB: {str(e)}")
 
 # 🧐 Endpoint pour récupérer les visites
@@ -249,4 +249,3 @@ async def get_visits_by_domain(domain: str):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération des visites: {str(e)}")
-
