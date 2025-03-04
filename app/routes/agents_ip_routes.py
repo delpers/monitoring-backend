@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
 from typing import Optional, List
 import traceback
-from bson import ObjectId  # Gestion des ObjectId pour MongoDB
+from bson import ObjectId, json_util  # Gestion des ObjectId pour MongoDB
 from app.services.ip_public_service import get_public_ip  # Import de la fonction
 import asyncio
 import json
@@ -103,22 +103,20 @@ async def websocket_endpoint(websocket: WebSocket):
         active_connections.remove(websocket)
         print("Client déconnecté")
 
-# Fonction pour envoyer une mise à jour en temps réel sur toutes les connexions actives
-import json  # 📌 Assure-toi d'importer json
+# Fonction pour convertir automatiquement ObjectId en chaînes lors de la sérialisation
+def custom_json_serializer(obj):
+    if isinstance(obj, ObjectId):
+        return str(obj)  # Convertir ObjectId en chaîne
+    if isinstance(obj, datetime):
+        return obj.isoformat()  # Convertir datetime en chaîne ISO
+    raise TypeError(f"Type {type(obj)} non sérialisable")
 
 # Fonction pour envoyer une mise à jour en temps réel sur toutes les connexions actives
 async def notify_visits_change(visit_data: dict):
-    # Convertir les objets datetime en chaînes ISO
-    visit_data = {
-        **visit_data,
-        "date_entree": visit_data["date_entree"].isoformat() if visit_data["date_entree"] else None,
-        "date_sortie": visit_data["date_sortie"].isoformat() if visit_data["date_sortie"] else None
-    }
-
     message = json.dumps({
         "event": "new_visit",
         "data": visit_data
-    })
+    }, default=custom_json_serializer)  # Utilisation du sérialiseur personnalisé
 
     # Envoyer un message à toutes les connexions actives
     for connection in active_connections:
