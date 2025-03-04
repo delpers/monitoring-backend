@@ -106,10 +106,10 @@ async def websocket_endpoint(websocket: WebSocket):
 # Fonction pour convertir automatiquement ObjectId en chaînes lors de la sérialisation
 def custom_json_serializer(obj):
     if isinstance(obj, ObjectId):
-        return str(obj)  # Convertir ObjectId en chaîne
-    if isinstance(obj, datetime):
-        return obj.isoformat()  # Convertir datetime en chaîne ISO
-    raise TypeError(f"Type {type(obj)} non sérialisable")
+        return str(obj)  # Convert ObjectId to string
+    if hasattr(obj, 'isoformat'):  # More robust check for datetime-like objects
+        return obj.isoformat()  # Convert datetime to ISO format string
+    raise TypeError(f"Type {type(obj)} not serializable")
 
 # Fonction pour envoyer une mise à jour en temps réel sur toutes les connexions actives
 async def notify_visits_change(visit_data: dict):
