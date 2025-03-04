@@ -18,6 +18,7 @@ origins = [
     "http://localhost",        # URL de votre frontend en développement
     "http://localhost:3000",
     "https://*.gitpod.io",
+    "monitoring-backend-17d6.onrender.com"
     "*",                       # Autorise toutes les origines (attention en production)
 ]
 

@@ -86,50 +86,32 @@ def verify_token(authorization: str = Header(...)):
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Token invalide")
 
+def serialize_visit_data(visit_data):
+    """
+    Sérialise les données de la visite pour les rendre JSON-compatibles.
+    - Convertir les objets datetime en format ISO 8601
+    - Convertir les ObjectId en chaînes
+    """
+    if isinstance(visit_data, dict):
+        for key, value in visit_data.items():
+            if isinstance(value, datetime.datetime):
+                visit_data[key] = value.isoformat()  # Convertir en chaîne ISO 8601
+            elif isinstance(value, ObjectId):
+                visit_data[key] = str(value)  # Convertir ObjectId en chaîne
+            elif isinstance(value, list):  # Si c'est une liste, on traite chaque élément
+                visit_data[key] = [serialize_visit_data(item) for item in value]
+    return visit_data
+
 # Route WebSocket pour les connexions en temps réel
-@router.websocket("/ws/visits")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    active_connections.append(websocket)
-    try:
-        while True:
-            # Attendre un message du client (si nécessaire)
-            data = await websocket.receive_text()
-            print(f"Message reçu: {data}")
-            # Vous pouvez gérer les messages du client ici, si besoin
-            # Par exemple, vérifier un domaine ou envoyer des informations spécifiques.
-    except WebSocketDisconnect:
-        active_connections.remove(websocket)
-        print("Client déconnecté")
-
-# Fonction pour envoyer une mise à jour en temps réel sur toutes les connexions actives
-async def notify_visits_change(visit_data: dict):
-    # Convertir les données de visite en un format lisible pour les clients
-    message = f"Nouvelle visite: {visit_data}"
-
-    # Envoyer un message à toutes les connexions actives
-    for connection in active_connections:
-        try:
-            await connection.send_text(message)
-        except Exception as e:
-            print(f"Erreur lors de l'envoi du message: {e}")
-
-# 🚀 Enregistrement d'une nouvelle visite
-# Modifier la fonction `track_visit` pour notifier en temps réel via WebSocket
 @router.post("/agents/visit/")
 async def track_visit(visit: UserVisit, token: dict = Depends(verify_token)):
     try:
         print("✅ Enregistrement d'une nouvelle visite:", visit.dict())
 
+        # Sérialisation des données avant de les insérer en base de données
+        visit_data = serialize_visit_data(visit.dict())
+
         # Insérer la visite en MongoDB
-        visit_data = {
-            "ip": visit.ip,
-            "user_agent": visit.user_agent,
-            "date_entree": visit.date_entree,
-            "date_sortie": visit.date_sortie,
-            "domain": visit.domain,
-            "tracking_user_analytics": visit.tracking_user_analytics
-        }
         result = await visits_collection.insert_one(visit_data)
 
         # Ajouter l'IP au suivi des logs par domaine
@@ -159,6 +141,21 @@ async def track_visit(visit: UserVisit, token: dict = Depends(verify_token)):
         error_details = traceback.format_exc()
         print("❌ Erreur lors de l'enregistrement de la visite:", error_details)
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'insertion: {str(e)}")
+
+
+# Fonction pour envoyer une mise à jour en temps réel sur toutes les connexions actives
+async def notify_visits_change(visit_data: dict):
+    # Sérialisation des données avant de les envoyer via WebSocket
+    visit_data_serialized = serialize_visit_data(visit_data)
+
+    message = f"Nouvelle visite: {visit_data_serialized}"
+
+    # Envoyer un message à toutes les connexions actives
+    for connection in active_connections:
+        try:
+            await connection.send_text(message)
+        except Exception as e:
+            print(f"Erreur lors de l'envoi du message: {e}")
 
 # 🔄 Mise à jour de la sortie de visite
 @router.put("/agents/visit/update/")
