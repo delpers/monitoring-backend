@@ -1,13 +1,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes.monitoring_routes import router as monitoring_router  # Import du routeur de monitoring
-from app.routes.agents_ip_routes import router as agents_ip_router  # Import du routeur des agents
-from app.routes.monitoring_ws_routes import router as ws_router  # ✅ Import de la route WebSocket
-import asyncio  # ✅ Import pour gérer les tâches asynchrones
-
-# Charger les variables d'environnement
+from app.routes.monitoring_routes import router as monitoring_router
+from app.routes.agents_ip_routes import router as agents_ip_router
+from app.routes.monitoring_ws_routes import router as ws_router
 import os
 from dotenv import load_dotenv
+
+# Charger les variables d'environnement
 load_dotenv()
 
 # Créer l'application FastAPI
@@ -15,10 +14,11 @@ app = FastAPI()
 
 # Ajouter la configuration CORS
 origins = [
-    "http://localhost",        # URL de votre frontend en développement
+    "http://localhost",        # Frontend local en développement
     "http://localhost:3000",
     "https://*.gitpod.io",
-    "*",                       # Autorise toutes les origines (attention en production)
+    "*",                       # Autoriser toutes les origines (attention en production)
+    "https://monitoring-backend-17d6.onrender.com",  # Ajoutez l'URL de votre frontend dans Render si besoin
 ]
 
 app.add_middleware(
@@ -32,5 +32,4 @@ app.add_middleware(
 # Ajouter les routeurs
 app.include_router(monitoring_router, prefix="/services")
 app.include_router(agents_ip_router)
-
-
+app.include_router(ws_router)  # Ajoutez votre routeur WebSocket
