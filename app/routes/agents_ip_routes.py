@@ -10,6 +10,7 @@ import traceback
 from bson import ObjectId  # Gestion des ObjectId pour MongoDB
 from app.services.ip_public_service import get_public_ip  # Import de la fonction
 import asyncio
+import json
 
 # Liste des connexions WebSocket actives
 active_connections: List[WebSocket] = []
