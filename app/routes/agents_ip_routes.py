@@ -1,14 +1,18 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Header, Body
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Header, Body, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 import jwt  # Assurez-vous que PyJWT est installé: pip install PyJWT
 import datetime
 import os
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
-from typing import Optional
+from typing import Optional, List
 import traceback
 from bson import ObjectId  # Gestion des ObjectId pour MongoDB
 from app.services.ip_public_service import get_public_ip  # Import de la fonction
+import asyncio
+
+# Liste des connexions WebSocket actives
+active_connections: List[WebSocket] = []
 
 # Charger les variables d'environnement
 load_dotenv()
@@ -82,7 +86,36 @@ def verify_token(authorization: str = Header(...)):
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Token invalide")
 
+# Route WebSocket pour les connexions en temps réel
+@router.websocket("/ws/visits")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    active_connections.append(websocket)
+    try:
+        while True:
+            # Attendre un message du client (si nécessaire)
+            data = await websocket.receive_text()
+            print(f"Message reçu: {data}")
+            # Vous pouvez gérer les messages du client ici, si besoin
+            # Par exemple, vérifier un domaine ou envoyer des informations spécifiques.
+    except WebSocketDisconnect:
+        active_connections.remove(websocket)
+        print("Client déconnecté")
+
+# Fonction pour envoyer une mise à jour en temps réel sur toutes les connexions actives
+async def notify_visits_change(visit_data: dict):
+    # Convertir les données de visite en un format lisible pour les clients
+    message = f"Nouvelle visite: {visit_data}"
+
+    # Envoyer un message à toutes les connexions actives
+    for connection in active_connections:
+        try:
+            await connection.send_text(message)
+        except Exception as e:
+            print(f"Erreur lors de l'envoi du message: {e}")
+
 # 🚀 Enregistrement d'une nouvelle visite
+# Modifier la fonction `track_visit` pour notifier en temps réel via WebSocket
 @router.post("/agents/visit/")
 async def track_visit(visit: UserVisit, token: dict = Depends(verify_token)):
     try:
@@ -113,6 +146,9 @@ async def track_visit(visit: UserVisit, token: dict = Depends(verify_token)):
             {"$push": {"ips": ip_data}},
             upsert=True
         )
+
+        # Notifier les connexions WebSocket actives
+        await notify_visits_change(visit_data)
 
         return {
             "status": "success",
@@ -180,7 +216,6 @@ async def update_visit_exit(
         print(error_details)  # Log plus détaillé
         raise HTTPException(status_code=500, detail=f"Erreur MongoDB: {str(e)}")
 
-
 # 🧐 Endpoint pour récupérer les visites
 @router.get("/agents/visits/{domain}")
 async def get_visits_by_domain(domain: str):
@@ -203,3 +238,4 @@ async def get_visits_by_domain(domain: str):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération des visites: {str(e)}")
+
