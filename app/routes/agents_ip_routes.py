@@ -104,23 +104,28 @@ async def websocket_endpoint(websocket: WebSocket):
         print("Client déconnecté")
 
 # Fonction pour envoyer une mise à jour en temps réel sur toutes les connexions actives
+import json  # 📌 Assure-toi d'importer json
+
+# Fonction pour envoyer une mise à jour en temps réel sur toutes les connexions actives
 async def notify_visits_change(visit_data: dict):
-    try:
-        # Convertir visit_data en JSON valide avec un format structuré
-        message = json.dumps({
-            "event": "new_visit",
-            "data": visit_data  # Les données brutes de la visite
-        })
+    # Convertir les objets datetime en chaînes ISO
+    visit_data = {
+        **visit_data,
+        "date_entree": visit_data["date_entree"].isoformat() if visit_data["date_entree"] else None,
+        "date_sortie": visit_data["date_sortie"].isoformat() if visit_data["date_sortie"] else None
+    }
 
-        # Envoyer le JSON correctement formaté aux connexions actives
-        for connection in active_connections:
-            try:
-                await connection.send_text(message)
-            except Exception as e:
-                print(f"Erreur lors de l'envoi du message: {e}")
+    message = json.dumps({
+        "event": "new_visit",
+        "data": visit_data
+    })
 
-    except Exception as e:
-        print(f"Erreur lors de la conversion en JSON: {e}")
+    # Envoyer un message à toutes les connexions actives
+    for connection in active_connections:
+        try:
+            await connection.send_text(message)
+        except Exception as e:
+            print(f"Erreur lors de l'envoi du message: {e}")
 
 # 🚀 Enregistrement d'une nouvelle visite
 # Modifier la fonction `track_visit` pour notifier en temps réel via WebSocket
