@@ -104,15 +104,22 @@ async def websocket_endpoint(websocket: WebSocket):
 
 # Fonction pour envoyer une mise à jour en temps réel sur toutes les connexions actives
 async def notify_visits_change(visit_data: dict):
-    # Convertir les données de visite en un format lisible pour les clients
-    message = f"Nouvelle visite: {visit_data}"
+    try:
+        # Convertir visit_data en JSON valide avec un format structuré
+        message = json.dumps({
+            "event": "new_visit",
+            "data": visit_data  # Les données brutes de la visite
+        })
 
-    # Envoyer un message à toutes les connexions actives
-    for connection in active_connections:
-        try:
-            await connection.send_text(message)
-        except Exception as e:
-            print(f"Erreur lors de l'envoi du message: {e}")
+        # Envoyer le JSON correctement formaté aux connexions actives
+        for connection in active_connections:
+            try:
+                await connection.send_text(message)
+            except Exception as e:
+                print(f"Erreur lors de l'envoi du message: {e}")
+
+    except Exception as e:
+        print(f"Erreur lors de la conversion en JSON: {e}")
 
 # 🚀 Enregistrement d'une nouvelle visite
 # Modifier la fonction `track_visit` pour notifier en temps réel via WebSocket
