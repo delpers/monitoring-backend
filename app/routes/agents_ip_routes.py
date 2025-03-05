@@ -125,13 +125,22 @@ async def notify_visits_change(visit_data: dict):
         except Exception as e:
             print(f"Erreur lors de l'envoi du message: {e}")
 
+def get_visits_collection(domain: str):
+    # Remplacer les points par des underscores pour éviter des problèmes dans les noms de collection
+    sanitized_domain = domain.replace(".", "_")
+    # Retourner la collection spécifique au domaine
+    return db[f"visits_{sanitized_domain}"]
+    
 # 🚀 Enregistrement d'une nouvelle visite
 @router.post("/agents/visit/")
 async def track_visit(visit: UserVisit, token: dict = Depends(verify_token)):
     try:
         print("✅ Enregistrement d'une nouvelle visite:", visit.dict())
 
-        # Insérer la visite en MongoDB
+        # Obtenir la collection spécifique au domaine
+        visits_collection = get_visits_collection(visit.domain)
+
+        # Insérer la visite dans la collection du domaine
         visit_data = {
             "ip": visit.ip,
             "user_agent": visit.user_agent,
@@ -141,32 +150,16 @@ async def track_visit(visit: UserVisit, token: dict = Depends(verify_token)):
             "tracking_user_analytics": visit.tracking_user_analytics
         }
 
-        # Check if the visit already exists
+        # Vérifier si la visite existe déjà
         existing_visit = await visits_collection.find_one({
-            "domain": visit.domain,
             "tracking_user_analytics": visit.tracking_user_analytics,
-            "date_sortie": None  # Ensuring the visit is still active
+            "date_sortie": None
         })
 
         if existing_visit:
             raise HTTPException(status_code=400, detail="La visite est déjà en cours pour cet utilisateur.")
 
         result = await visits_collection.insert_one(visit_data)
-
-        # Ajouter l'IP au suivi des logs par domaine
-        ip_data = {
-            "ip": visit.ip,
-            "user_agent": visit.user_agent,
-            "date_entree": visit.date_entree,
-            "date_sortie": visit.date_sortie,
-            "tracking_user_analytics": visit.tracking_user_analytics
-        }
-
-        await ip_collection.update_one(
-            {"domain": visit.domain},
-            {"$push": {"ips": ip_data}},
-            upsert=True
-        )
 
         # Notifier les connexions WebSocket actives
         await notify_visits_change(visit_data)
@@ -271,11 +264,11 @@ async def update_visit_exit(
 @router.get("/agents/visits/{domain}")
 async def get_visits_by_domain(domain: str):
     try:
-        # Accédez à la collection 'visits' sous monitoring_db
-        visits_collection = db.visits
+        # Obtenir la collection spécifique au domaine
+        visits_collection = get_visits_collection(domain)
 
         # Filtrer les visites par domaine
-        visits = await visits_collection.find({"domain": domain}).to_list(100)
+        visits = await visits_collection.find().to_list(100)
 
         # Si aucune visite n'est trouvée
         if not visits:
@@ -289,3 +282,4 @@ async def get_visits_by_domain(domain: str):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération des visites: {str(e)}")
+
