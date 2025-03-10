@@ -12,3 +12,4 @@ cachetools
 uvicorn[standard]
 PyJWT
 redis
+pytz

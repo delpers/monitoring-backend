@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Header, Body, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Depends, Header, Body, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 import jwt
 import datetime
@@ -8,12 +8,18 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from typing import Optional, List
 import traceback
 from bson import ObjectId, json_util
-from app.services.ip_public_service import get_public_ip
-import asyncio
 import json
+import asyncio
+import pytz
+
+# Ip
+from app.services.ip_public_service import get_public_ip
 
 # Liste des connexions WebSocket actives
 active_connections: List[WebSocket] = []
+
+# Liste globale des clients connectés
+clients: List[WebSocket] = []
 
 # Charger les variables d'environnement
 load_dotenv()
@@ -46,16 +52,18 @@ class VisitUpdateData(BaseModel):
     date_sortie: datetime.datetime
     domain: str
 
-# Route pour obtenir l'IP publique
+# Route pour récupérer l'IP publique
 @router.get("/agents/ip")
-async def public_ip(request: Request):
-    ip = get_public_ip(request)  # Appel à la fonction modifiée avec request comme paramètre
-    if ip:
-        return {"ip": ip["ip"]}  # Extraire l'adresse IP de l'objet renvoyé par get_public_ip
-    return {"error": "Unable to fetch public IP"}
+async def get_ip(request: Request):
+    ip_data = get_public_ip(request)
+    
+    if "error" in ip_data:
+        raise HTTPException(status_code=500, detail=ip_data["error"])
+    
+    return ip_data
 
-# Route pour générer un token
-@router.post("/agents/generate-token/")
+# 📦 Route pour générer un token JWT
+@router.post("/agents/generate-token")
 async def generate_token(request: TokenRequest):
     try:
         full_user_id = f"{request.domain}_user_{request.user_id}"
@@ -65,7 +73,6 @@ async def generate_token(request: TokenRequest):
         }
         token = jwt.encode(payload, SECRET_KEY, algorithm="HS256")
         
-        # Handle different versions of PyJWT
         if isinstance(token, bytes):
             token = token.decode('utf-8')
             
@@ -79,7 +86,7 @@ def verify_token(authorization: str = Header(...)):
         raise HTTPException(status_code=401, detail="Token manquant ou mal formaté")
     
     try:
-        token = authorization.split("Bearer ")[1]  # Extraction après "Bearer "
+        token = authorization.split("Bearer ")[1]
         decoded_token = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
         return decoded_token
     except jwt.ExpiredSignatureError:
@@ -87,73 +94,141 @@ def verify_token(authorization: str = Header(...)):
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Token invalide")
 
-# Route WebSocket pour les connexions en temps réel
-@router.websocket("/ws/visits")
-async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    active_connections.append(websocket)
-    try:
-        while True:
-            # Attendre un message du client (si nécessaire)
-            data = await websocket.receive_text()
-            print(f"Message reçu: {data}")
-            # Vous pouvez gérer les messages du client ici, si besoin
-            # Par exemple, vérifier un domaine ou envoyer des informations spécifiques.
-    except WebSocketDisconnect:
-        active_connections.remove(websocket)
-        print("Client déconnecté")
 
-# Fonction pour convertir automatiquement ObjectId en chaînes lors de la sérialisation
-def custom_json_serializer(obj):
-    if isinstance(obj, ObjectId):
-        return str(obj)  # Convert ObjectId to string
-    if hasattr(obj, 'isoformat'):  # More robust check for datetime-like objects
-        return obj.isoformat()  # Convert datetime to ISO format string
-    raise TypeError(f"Type {type(obj)} not serializable")
-
-# Fonction pour envoyer une mise à jour en temps réel sur toutes les connexions actives
-async def notify_visits_change(visit_data: dict):
+# Fonction pour envoyer une mise à jour en temps réel à toutes les connexions actives
+async def notify_visits_change(visit_data: dict, event_type: str = "new_visit"):
     message = json.dumps({
-        "event": "new_visit",
+        "event": event_type,
         "data": visit_data
-    }, default=custom_json_serializer)  # Utilisation du sérialiseur personnalisé
-
-    # Envoyer un message à toutes les connexions actives
+    }, default=custom_json_serializer)  # Utiliser la fonction de sérialisation personnalisée
+    # Envoyer le message à toutes les connexions actives
     for connection in active_connections:
         try:
             await connection.send_text(message)
         except Exception as e:
             print(f"Erreur lors de l'envoi du message: {e}")
 
-# 🚀 Enregistrement d'une nouvelle visite
+
+
+
+# Fonction pour vérifier les connexions WebSocket inactives
+async def clean_inactive_connections():
+    try:
+        while True:
+            active_connections[:] = [conn for conn in active_connections if conn.client_state == WebSocket.OPEN]
+            await asyncio.sleep(60)
+    except asyncio.CancelledError:
+        print("🛑 Cleaning task cancelled.")
+        pass  # Ensure we handle task cancellation gracefully
+
+
+
+# Fonction pour vérifier si une IP est suspecte
+async def is_suspect_ip(ip: str, domain: str) -> bool:
+    # Récupérer les visites récentes pour cette IP et domaine
+    recent_visits = await visits_collection.find({
+        "ip": ip,
+        "domain": domain,
+        "date_entree": {"$gt": datetime.datetime.utcnow() - datetime.timedelta(hours=1)}
+    }).to_list(100)
+
+    # Si l'IP a plus de 5 visites dans la dernière heure, elle est suspecte
+    if len(recent_visits) > 5:
+        return True
+    return False
+
+
+
+# Route WebSocket pour les connexions en temps réel
+async def websocket_visits(websocket: WebSocket, token: str = Depends(verify_token)):
+    try:
+        await websocket.accept()
+        active_connections.append(websocket)
+        print(f"🔌 Connexion WebSocket acceptée. Nombre de clients connectés: {len(active_connections)}")
+        
+        # Maintenant, vous pouvez gérer les messages comme vous le faisiez précédemment
+        # Assurez-vous que le token est bien vérifié avant de continuer
+    except Exception as e:
+        print(f"Erreur de connexion WebSocket: {e}")
+        await websocket.close()
+        active_connections.remove(websocket)
+
+
+
+
+
+
+# Fonction pour convertir automatiquement ObjectId en chaînes lors de la sérialisation
+def custom_json_serializer(obj):
+    if isinstance(obj, ObjectId):
+        return str(obj)  # Convertir ObjectId en chaîne
+    if hasattr(obj, 'isoformat'):
+        return obj.isoformat()  # Convertir les objets datetime en chaîne
+    raise TypeError(f"Type {type(obj)} not serializable")
+
+
+
+
+
+
+
+# Exemple de fonction pour déterminer si une IP est suspecte
+async def is_suspect_ip(ip: str, domain: str) -> bool:
+    # Récupérer les visites récentes depuis MongoDB pour cette IP
+    recent_visits = await visits_collection.find({
+        "ip": ip,
+        "domain": domain,
+        "date_entree": {"$gt": datetime.utcnow() - timedelta(hours=1)}  # Visites de la dernière heure
+    }).to_list(100)
+
+    # Si cette IP a déjà trop de visites en peu de temps, elle est suspecte
+    if len(recent_visits) > 5:
+        return True
+
+    # Vérifier d'autres critères comme les pages sensibles ou tentatives échouées
+    # Par exemple : Si l'IP a tenté de se connecter à une page qui n'existe pas plusieurs fois
+    # À adapter en fonction de tes besoins
+
+    return False
+
+
+
+
+# Route pour enregistrer une nouvelle visite ou mettre à jour une visite existante
 @router.post("/agents/visit/")
 async def track_visit(visit: UserVisit, token: dict = Depends(verify_token)):
     try:
         print("✅ Enregistrement d'une nouvelle visite:", visit.dict())
 
-        # Insérer la visite en MongoDB
+        # Vérifier si une visite existe déjà pour cet utilisateur, sans date de sortie
+        existing_visit = await visits_collection.find_one({
+            "domain": visit.domain,
+            "tracking_user_analytics": visit.tracking_user_analytics,
+            "date_sortie": None  # Si une visite est en cours
+        })
+
+        if existing_visit:
+            existing_visit_id = existing_visit['_id']
+            await visits_collection.update_one(
+                {"_id": existing_visit_id},
+                {"$set": {"date_sortie": datetime.datetime.utcnow()}}  # Mettre à jour la date de sortie
+            )
+            print(f"🔄 La visite existante pour l'utilisateur {visit.tracking_user_analytics} a été mise à jour avec une date de sortie.")
+
+        # Préparer les données de la nouvelle visite
         visit_data = {
             "ip": visit.ip,
             "user_agent": visit.user_agent,
-            "date_entree": visit.date_entree,
-            "date_sortie": visit.date_sortie,
+            "date_entree": visit.date_entree.astimezone(datetime.timezone.utc),  # Assurer que c'est en UTC
+            "date_sortie": visit.date_sortie.astimezone(datetime.timezone.utc) if visit.date_sortie else None,
             "domain": visit.domain,
             "tracking_user_analytics": visit.tracking_user_analytics
         }
 
-        # Check if the visit already exists
-        existing_visit = await visits_collection.find_one({
-            "domain": visit.domain,
-            "tracking_user_analytics": visit.tracking_user_analytics,
-            "date_sortie": None  # Ensuring the visit is still active
-        })
-
-        if existing_visit:
-            raise HTTPException(status_code=400, detail="La visite est déjà en cours pour cet utilisateur.")
-
+        # Insérer la nouvelle visite dans la collection "visits"
         result = await visits_collection.insert_one(visit_data)
 
-        # Ajouter l'IP au suivi des logs par domaine
+        # Ajouter ou mettre à jour l'IP dans la collection "ip_collection"
         ip_data = {
             "ip": visit.ip,
             "user_agent": visit.user_agent,
@@ -163,12 +238,12 @@ async def track_visit(visit: UserVisit, token: dict = Depends(verify_token)):
         }
 
         await ip_collection.update_one(
-            {"domain": visit.domain},
-            {"$push": {"ips": ip_data}},
-            upsert=True
+            {"domain": visit.domain},  # Recherche par domaine
+            {"$push": {"ips": ip_data}},  # Ajouter la nouvelle IP sous le domaine
+            upsert=True  # Crée une entrée si le domaine n'existe pas
         )
 
-        # Notifier les connexions WebSocket actives
+        # Notifier du changement de visite (ex: via WebSocket ou autre mécanisme)
         await notify_visits_change(visit_data)
 
         return {
@@ -181,7 +256,10 @@ async def track_visit(visit: UserVisit, token: dict = Depends(verify_token)):
         print("❌ Erreur lors de l'enregistrement de la visite:", error_details)
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'insertion: {str(e)}")
 
-# Modifier la mise à jour pour s'assurer que le datetime est correctement converti
+
+    
+
+# Mise à jour de la sortie de la visite
 @router.put("/agents/visit/update/")
 async def update_visit_exit(
     visit_id: str,
@@ -192,112 +270,138 @@ async def update_visit_exit(
         print("📡 Mise à jour d'une visite avec visit_id:", visit_id)
         print("📡 Données reçues:", visit_update.dict())
 
-        object_id = ObjectId(visit_id)
+        try:
+            object_id = ObjectId(visit_id)  # Convertir l'ID de la visite en ObjectId
+        except Exception as e:
+            raise HTTPException(status_code=400, detail="ID de visite invalide")
 
-        # Debug print of datetime
-        print("🕒 Date de sortie reçue:", visit_update.date_sortie)
-        print("🕒 Type de date de sortie:", type(visit_update.date_sortie))
+        existing_visit = await visits_collection.find_one({"_id": object_id})
+        if not existing_visit:
+            raise HTTPException(status_code=404, detail="Visite introuvable")
 
-        # Ensure datetime is UTC
-        if visit_update.date_sortie.tzinfo is None:
-            visit_update.date_sortie = visit_update.date_sortie.replace(tzinfo=datetime.timezone.utc)
+        update_data = {}
 
-        # Alternative update method with explicit UTC conversion
+        if hasattr(visit_update, 'date_sortie') and visit_update.date_sortie is not None:
+            if visit_update.date_sortie.tzinfo is None:
+                visit_update.date_sortie = visit_update.date_sortie.replace(tzinfo=datetime.timezone.utc)
+            update_data["date_sortie"] = visit_update.date_sortie
+        else:
+            update_data["date_sortie"] = None
+            update_data["date_entree"] = datetime.datetime.utcnow()
+
         update_result = await visits_collection.update_one(
-            {"_id": object_id, "domain": visit_update.domain},
-            {"$set": {"date_sortie": visit_update.date_sortie}}
+            {"_id": object_id},
+            {"$set": update_data}
         )
-
-        print("📊 Résultat de la mise à jour:", update_result.modified_count)
 
         if update_result.modified_count == 0:
             raise HTTPException(status_code=400, detail="Mise à jour impossible")
 
-        # Notify WebSocket clients
         updated_visit = await visits_collection.find_one({"_id": object_id})
-        await notify_visits_change({
-            "event": "update_exit",
-            "data": updated_visit
-        })
+        if not updated_visit:
+            raise HTTPException(status_code=404, detail="Visite introuvable après mise à jour")
 
-        return {"status": "success", "message": "Sortie mise à jour"}
+        event_type = "update_exit" if "date_sortie" in update_data and update_data["date_sortie"] is not None else "update_session"
+        await notify_visits_change(updated_visit, event_type)
+
+        # Retourner les résultats après conversion de l'ObjectId en chaîne
+        return {
+            "status": "success", 
+            "message": "Session mise à jour",
+            "visit_id": str(object_id),
+            "updated_visit": json.dumps(updated_visit, default=custom_json_serializer)  # Sérialisation personnalisée
+        }
+
     except Exception as e:
         error_details = traceback.format_exc()
-        print("❌ Erreur complète lors de la mise à jour:")
-        print(error_details)
-        raise HTTPException(status_code=500, detail=f"Erreur MongoDB: {str(e)}")
-
-@router.put("/agents/visit/update/{visit_id}")
-async def update_visit_exit(
-    visit_id: str,
-    visit_update: VisitUpdateData = Body(...),
-    token: dict = Depends(verify_token)
-):
-    try:
-        print("📡 Mise à jour d'une visite avec visit_id:", visit_id)
-        print("📡 Données reçues:", visit_update.dict())
-
-        # Conversion de visit_id en ObjectId
-        object_id = ObjectId(visit_id)
-
-        # Assurez-vous que la date de sortie est en UTC
-        if visit_update.date_sortie.tzinfo is None:
-            visit_update.date_sortie = visit_update.date_sortie.replace(tzinfo=datetime.timezone.utc)
-
-        # Mise à jour de la visite
-        update_result = await visits_collection.update_one(
-            {"_id": object_id, "domain": visit_update.domain},
-            {"$set": {"date_sortie": visit_update.date_sortie}}
-        )
-
-        if update_result.modified_count == 0:
-            raise HTTPException(status_code=400, detail="Mise à jour impossible")
-
-        # Récupérer la visite mise à jour
-        updated_visit = await visits_collection.find_one({"_id": object_id})
-        
-        # Notifier les connexions WebSocket des mises à jour
-        await notify_visits_change({
-            "event": "update_exit",
-            "data": updated_visit
-        })
-
-        return {"status": "success", "message": "Sortie mise à jour"}
-    except Exception as e:
-        print(f"❌ Erreur lors de la mise à jour: {e}")
+        print(f"❌ Erreur lors de la mise à jour: {error_details}")
         raise HTTPException(status_code=500, detail=f"Erreur lors de la mise à jour: {str(e)}")
 
-# 🧐 Endpoint pour récupérer les visites
-@router.get("/agents/visits/{domain}")
-async def get_visits_by_domain(domain: str):
+
+@router.get("/agents/visits")
+async def get_visits_and_ips():
     try:
-        # Accédez à la collection 'visits' sous monitoring_db
-        visits_collection = db.visits
+        print("📥 Tentative de récupération des visites...")
+        visits = await visits_collection.find().to_list(100)
+        print(f"🔍 Visites récupérées: {visits}")
 
-        # Filtrer les visites par domaine
-        visits = await visits_collection.find({"domain": domain}).to_list(100)
-
-        # Si aucune visite n'est trouvée
         if not visits:
-            return {"status": "success", "visits": []}
+            print("📭 Aucune visite trouvée.")
+            return {"status": "success", "visits": [], "ips": []}
 
-        # Conversion des ObjectId en string pour le JSON
         for visit in visits:
             visit["_id"] = str(visit["_id"])
 
-        return {"status": "success", "visits": visits}
+        print("📥 Tentative de récupération des IPs...")
+        ip_logs = await ip_collection.find().to_list(100)
+        print(f"🔍 IPs récupérées: {ip_logs}")
+
+        for ip_log in ip_logs:
+            ip_log["_id"] = str(ip_log["_id"])
+
+        return {
+            "status": "success",
+            "visits": visits,
+            "ips": ip_logs
+        }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération des visites: {str(e)}")
+        error_details = traceback.format_exc()
+        print(f"❌ Erreur lors de la récupération des visites et IPs: {error_details}")
+        raise HTTPException(status_code=500, detail=f"Erreur lors de la récupération des visites et IPs: {str(e)}")
 
-@router.websocket("/ws/ips")
-async def websocket_ips_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    active_connections.append(websocket)
+
+# Route WebSocket pour les connexions en temps réel
+@router.websocket("/ws/visits")
+async def websocket_visits(websocket: WebSocket):
     try:
+        await websocket.accept()
+        active_connections.append(websocket)  # Ajouter le client à la liste des connexions actives
+        print("🔌 Connexion WebSocket acceptée")
+        print(f"🌐 Nombre de clients connectés : {len(active_connections)}")
+        
         while True:
+            # Recevoir les messages du client
             data = await websocket.receive_text()
-            print(f"Message reçu (IPs): {data}")
+            print(f"📨 Message brut reçu: {data}")
+
+            try:
+                # On suppose que les messages sont en JSON
+                message = json.loads(data)
+                
+                if message.get("event") == "new_visit":
+                    print("Nouvelle visite reçue", message)
+                    # Diffuser la nouvelle visite à tous les clients
+                    await notify_visits_change(message['data'], event_type="new_visit")
+                
+                elif message.get("event") == "update_exit":
+                    print("Mise à jour de sortie reçue", message)
+                    # Diffuser la mise à jour de sortie à tous les clients
+                    await notify_visits_change(message['data'], event_type="update_exit")
+                
+                else:
+                    print("Événement inconnu")
+            except json.JSONDecodeError:
+                print("Erreur de décodage JSON reçu")
+                await websocket.send_text("Erreur: message malformé")
+
     except WebSocketDisconnect:
+        # Supprimer la connexion de la liste active lorsqu'un client se déconnecte
         active_connections.remove(websocket)
-        print("Client déconnecté du WebSocket IPs")
+        print("❌ Un client s'est déconnecté.")
+        print(f"🌐 Nombre de clients restants : {len(active_connections)}")
+
+    except Exception as e:
+        print(f"❗ Erreur WebSocket: {e}")
+        await websocket.send_text(f"Erreur serveur: {str(e)}")
+
+
+
+# Ajouter la tâche de nettoyage lors du démarrage du serveur
+@app.on_event("shutdown")
+async def shutdown_event():
+    # Close all active WebSocket connections
+    for connection in active_connections:
+        await connection.close()
+    active_connections.clear()
+    print("🌐 All WebSocket connections closed.")
