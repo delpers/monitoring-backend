@@ -13,3 +13,5 @@ uvicorn[standard]
 PyJWT
 redis
 pytz
+slowapi
+black
