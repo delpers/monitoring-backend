@@ -1,5 +1,6 @@
 from fastapi import Request
 
+
 def get_public_ip(request: Request):
     try:
         # Check various headers where the IP might be found
@@ -11,15 +12,17 @@ def get_public_ip(request: Request):
             ip = x_real_ip
         elif cf_connecting_ip := request.headers.get("cf-connecting-ip"):  # Cloudflare
             ip = cf_connecting_ip
-        elif true_client_ip := request.headers.get("true-client-ip"):  # Akamai/Cloudflare
+        elif true_client_ip := request.headers.get(
+            "true-client-ip"
+        ):  # Akamai/Cloudflare
             ip = true_client_ip
         else:
             # Fallback to the direct client IP if no proxy headers are found
             ip = request.client.host if hasattr(request, "client") else None
-            
+
         if not ip:
             return {"ip": "0.0.0.0", "error": "Could not determine IP address"}
-            
+
         return {"ip": ip}
     except Exception as e:
         return {"ip": "0.0.0.0", "error": f"Error retrieving IP: {str(e)}"}

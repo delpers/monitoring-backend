@@ -2,6 +2,7 @@ import ssl
 import socket
 from datetime import datetime
 
+
 class SSLService:
     def __init__(self):
         pass
@@ -22,7 +23,11 @@ class SSLService:
                     # Fonction de transformation sécurisée pour les sujets et émetteurs
                     def safe_dict(cert_field):
                         """Transforme une liste de tuples en un dictionnaire"""
-                        return {item[0]: item[1] for item in cert_field} if isinstance(cert_field, list) else {}
+                        return (
+                            {item[0]: item[1] for item in cert_field}
+                            if isinstance(cert_field, list)
+                            else {}
+                        )
 
                     # Extraire subject et issuer de manière sécurisée
                     subject_dict = safe_dict(cert.get("subject", []))
